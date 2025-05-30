@@ -15,21 +15,63 @@
  * Learn more at https://developers.cloudflare.com/workers/
  */
 
-async function sendMessageToSlack(env) {
-    console.log('send to slack')
+import { XMLParser } from 'fast-xml-parser';
+
+async function getArXivInfo() {
+    const apiUrl = `http://export.arxiv.org/api/query?search_query=cat:cs.RO&sortBy=submittedDate&sortOrder=descending&max_results=100`;
+    const res = await fetch(apiUrl);
+    const xml = await res.text();
+
+    const parser = new XMLParser({
+        ignoreAttributes: false,
+        attributeNamePrefix: '',
+        trimValues: true,
+    });
+
+    const json = parser.parse(xml);
+    const rawEntries = json.feed.entry;
+    const entries = Array.isArray(rawEntries) ? rawEntries : [rawEntries];
+
+    const yesterday = new Date();
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+    const ymd = yesterday.toISOString().split('T')[0];
+
+    const filtered = entries
+        .filter(e => {
+            const publishedDate = e.published?.split('T')[0];
+            const categories = Array.isArray(e.category)
+                             ? e.category.map(c => c.term)
+                             : [e.category?.term];
+            return publishedDate === ymd && categories.includes('cs.RO');
+            // return categories.includes('cs.RO');
+        })
+        .map(e => ({
+            title: e.title,
+            id: e.id,
+            published: e.published,
+            summary: e.summary,
+            authors: Array.isArray(e.author)
+                   ? e.author.map(a => a.name)
+                   : [e.author?.name],
+            pdf_url: Array.isArray(e.link)
+                   ? e.link.find(l => l.title === 'pdf')?.href
+                   : e.link?.title === 'pdf' ? e.link.href : '',
+            categories: Array.isArray(e.category)
+                      ? e.category.map(c => c.term)
+                      : [],
+        }));
+    return new Response(JSON.stringify(filtered, null, 2), {
+        headers: { "Content-Type": "application/json" },
+    });
+}
+
+async function sendMessageToSlack(env, contents) {
     const botAccessToken = env.SLACK_BOT_ACCESS_TOKEN
     const slackWebhookUrl = 'https://slack.com/api/chat.postMessage';
 
     const payload = {
 	    channel: env.SLACK_BOT_ACCESS_CHANNEL,
-	    attachments: [
-		    {
-			    title: "Cloudflare Workers Cron Trigger",
-			    text: "This is Japan Standard Time now",
-			    author_name: "arXiv-bot",
-			    color: "#00FF00",
-		    },
-	    ],
+        attachments: contents,
     };
 
     await fetch(slackWebhookUrl, {
@@ -52,8 +94,41 @@ async function sendMessageToSlack(env) {
     });
 }
 
+async function parseDataForSlack(entries) {
+    return entries.map(entry => {
+        const { title, id, published, summary, authors, pdf_url, categories } = entry;
+
+        // const formatted = `*<${id}|${title}>*\n` +
+        //                   `*Published:* ${published.split('T')[0]}\n` +
+        //                   `*Authors:* ${authors.join(', ')}\n` +
+        //                   `*Categories:* ${categories.join(', ')}\n` +
+        //                   `*PDF:* <${pdf_url}|Download PDF>\n` +
+        //                   `*Summary:*\n${summary.replace(/\s+/g, ' ').trim().slice(0, 500)}...`;
+
+        const formatted = `*Published:* ${published.split('T')[0]}\n` +
+                          `*Authors:* ${authors.join(', ')}\n` +
+                          `*Categories:* ${categories.join(', ')}\n` +
+                          `*PDF:* <${pdf_url}|Download PDF>\n` +
+                          `*Summary:*\n${summary.replace(/\s+/g, ' ').trim().slice(0, 500)}...`;
+
+        return {
+            color: '#36a64f',
+            author_name: 'arXiv cs.RO bot',
+            title: title,
+            title_link: id,
+            text: formatted,
+        };
+    });
+}
+
 export default {
-	async fetch(req) {
+	async fetch(req, env) {
+
+        // const res = await getArXivInfo();
+        // const data = await res.json();
+        // const message = await parseDataForSlack(data)
+        // await sendMessageToSlack(env, message);
+        
 		const url = new URL(req.url);
 		url.pathname = '/__scheduled';
 		url.searchParams.append('cron', '* * * * *');
@@ -74,7 +149,10 @@ export default {
 		// In this template, we'll just log the result:
 		console.log(`trigger fired at ${event.cron}: ${wasSuccessful}`);
 
-        await sendMessageToSlack(env);
+        const res = await getArXivInfo();
+        const data = await res.json();
+        const message = await parseDataForSlack(data)
+        await sendMessageToSlack(env, message);
 
 	},
 } satisfies ExportedHandler<Env>;
