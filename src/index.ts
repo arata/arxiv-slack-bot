@@ -15,6 +15,43 @@
  * Learn more at https://developers.cloudflare.com/workers/
  */
 
+async function sendMessageToSlack(env) {
+    console.log('send to slack')
+    const botAccessToken = env.SLACK_BOT_ACCESS_TOKEN
+    const slackWebhookUrl = 'https://slack.com/api/chat.postMessage';
+
+    const payload = {
+	    channel: env.SLACK_BOT_ACCESS_CHANNEL,
+	    attachments: [
+		    {
+			    title: "Cloudflare Workers Cron Trigger",
+			    text: "This is Japan Standard Time now",
+			    author_name: "arXiv-bot",
+			    color: "#00FF00",
+		    },
+	    ],
+    };
+
+    await fetch(slackWebhookUrl, {
+	    method: "POST",
+	    body: JSON.stringify(payload),
+	    headers: {
+		    "Content-Type": "application/json; charset=utf-8",
+		    Authorization: `Bearer ${botAccessToken}`,
+		    Accept: "application/json",
+	    },
+    }).then((res) => {
+	    if (!res.ok) {
+		    throw new Error(`Server error ${res.status}`);
+	    }
+	    return res.json();
+    }).then((data) => {
+	    console.log("Slack response:", data);
+    }).catch((error) => {
+	    console.log("Error:", error);
+    });
+}
+
 export default {
 	async fetch(req) {
 		const url = new URL(req.url);
@@ -36,5 +73,8 @@ export default {
 		// You could store this result in KV, write to a D1 Database, or publish to a Queue.
 		// In this template, we'll just log the result:
 		console.log(`trigger fired at ${event.cron}: ${wasSuccessful}`);
+
+        await sendMessageToSlack(env);
+
 	},
 } satisfies ExportedHandler<Env>;
