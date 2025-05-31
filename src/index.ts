@@ -33,7 +33,8 @@ async function getArXivInfo() {
     const entries = Array.isArray(rawEntries) ? rawEntries : [rawEntries];
 
     const yesterday = new Date();
-    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+    console.log(yesterday)
+    yesterday.setUTCDate(yesterday.getUTCDate() - 2);
     const ymd = yesterday.toISOString().split('T')[0];
 
     const filtered = entries
@@ -42,6 +43,7 @@ async function getArXivInfo() {
             const categories = Array.isArray(e.category)
                              ? e.category.map(c => c.term)
                              : [e.category?.term];
+            console.log(publishedDate, 'ymd: ', ymd)
             return publishedDate === ymd && categories.includes('cs.RO');
             // return categories.includes('cs.RO');
         })
@@ -142,12 +144,12 @@ export default {
 		// publish to a Queue, query a D1 Database, and much more.
 		//
 		// We'll keep it simple and make an API call to a Cloudflare API:
-		let resp = await fetch('https://api.cloudflare.com/client/v4/ips');
-		let wasSuccessful = resp.ok ? 'success' : 'fail';
+		// let resp = await fetch('https://api.cloudflare.com/client/v4/ips');
+		// let wasSuccessful = resp.ok ? 'success' : 'fail';
 
 		// You could store this result in KV, write to a D1 Database, or publish to a Queue.
 		// In this template, we'll just log the result:
-		console.log(`trigger fired at ${event.cron}: ${wasSuccessful}`);
+		// console.log(`trigger fired at ${event.cron}: ${wasSuccessful}`);
 
         const res = await getArXivInfo();
         const data = await res.json();
