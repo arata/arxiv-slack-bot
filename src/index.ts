@@ -18,7 +18,10 @@
 import { XMLParser } from 'fast-xml-parser';
 
 async function getArXivInfo() {
-    const apiUrl = `http://export.arxiv.org/api/query?search_query=cat:cs.RO&sortBy=submittedDate&sortOrder=descending&max_results=100`;
+    // rssで受け取るのが一番最新っぽくて更新もはやそう．APIは遅いかもしれない
+    // const apiUrl = `http://export.arxiv.org/api/query?search_query=cat:cs.RO&sortBy=submittedDate&sortOrder=descending&max_results=100`;
+
+    const apiUrl = `https://rss.arxiv.org/rss/cs.ro`
     const res = await fetch(apiUrl);
     const xml = await res.text();
 
@@ -29,49 +32,43 @@ async function getArXivInfo() {
     });
 
     const json = parser.parse(xml);
-    const rawEntries = json.feed.entry;
+    const rawEntries = json.rss.channel.item;
     const entries = Array.isArray(rawEntries) ? rawEntries : [rawEntries];
 
-    const yesterday = new Date();
-    console.log(yesterday)
-    yesterday.setUTCDate(yesterday.getUTCDate() - 2);
-    const ymd = yesterday.toISOString().split('T')[0];
+    console.log(entries[0])
+    console.log(entries[0]['dc:creator'])
+
+    // const yesterday = new Date();
+    // console.log(yesterday)
+    // yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+    // const ymd = yesterday.toISOString().split('T')[0];
 
     const filtered = entries
         .filter(e => {
-            const publishedDate = e.published?.split('T')[0];
-            const categories = Array.isArray(e.category)
-                             ? e.category.map(c => c.term)
-                             : [e.category?.term];
-            console.log(publishedDate, 'ymd: ', ymd)
-            return publishedDate === ymd && categories.includes('cs.RO');
-            // return categories.includes('cs.RO');
+            return e['arxiv:announce_type'] === 'new' || e['arxiv:announce_type'] === 'cross';
         })
         .map(e => ({
             title: e.title,
-            id: e.id,
-            published: e.published,
-            summary: e.summary,
-            authors: Array.isArray(e.author)
-                   ? e.author.map(a => a.name)
-                   : [e.author?.name],
-            pdf_url: Array.isArray(e.link)
-                   ? e.link.find(l => l.title === 'pdf')?.href
-                   : e.link?.title === 'pdf' ? e.link.href : '',
+            // id: e.id,
+            published: e.pubDate,
+            summary: e['description'],
+            authors: e['dc:creator'],
+            arxiv_page: e['link'],
             categories: Array.isArray(e.category)
-                      ? e.category.map(c => c.term)
-                      : [],
+                      ? e.category.map(c => c)
+                      : [e.category],
         }));
     return new Response(JSON.stringify(filtered, null, 2), {
         headers: { "Content-Type": "application/json" },
     });
 }
 
-async function sendMessageToSlack(env, contents) {
+async function sendMessageToSlack(env, contents, num) {
     const botAccessToken = env.SLACK_BOT_ACCESS_TOKEN
     const slackWebhookUrl = 'https://slack.com/api/chat.postMessage';
 
     const payload = {
+        text: `昨日arXivに投稿された論文のリストを送ります．${num}本投稿されていました．`,
 	    channel: env.SLACK_BOT_ACCESS_CHANNEL,
         attachments: contents,
     };
@@ -98,26 +95,23 @@ async function sendMessageToSlack(env, contents) {
 
 async function parseDataForSlack(entries) {
     return entries.map(entry => {
-        const { title, id, published, summary, authors, pdf_url, categories } = entry;
+        const { title, id, published, summary, authors, arxiv_page, categories } = entry;
 
-        // const formatted = `*<${id}|${title}>*\n` +
-        //                   `*Published:* ${published.split('T')[0]}\n` +
-        //                   `*Authors:* ${authors.join(', ')}\n` +
-        //                   `*Categories:* ${categories.join(', ')}\n` +
-        //                   `*PDF:* <${pdf_url}|Download PDF>\n` +
-        //                   `*Summary:*\n${summary.replace(/\s+/g, ' ').trim().slice(0, 500)}...`;
+        const abstract = summary.split("Abstract:")[1]?.trim() || "";
+        const download_url = arxiv_page.replace("/abs/", "/pdf/");
 
-        const formatted = `*Published:* ${published.split('T')[0]}\n` +
-                          `*Authors:* ${authors.join(', ')}\n` +
+        const formatted = `*Published:* ${published}\n` +
+                          `*Authors:* ${authors}\n` +
                           `*Categories:* ${categories.join(', ')}\n` +
-                          `*PDF:* <${pdf_url}|Download PDF>\n` +
-                          `*Summary:*\n${summary.replace(/\s+/g, ' ').trim().slice(0, 500)}...`;
+                          `*Page:* ${arxiv_page} \n` +
+                          `*PDF:* <${download_url}|Download PDF>\n` +
+                          `*Summary:*\n${abstract.replace(/\s+/g, ' ').trim().slice(0, 500)}...`;
 
         return {
             color: '#36a64f',
-            author_name: 'arXiv cs.RO bot',
+            // author_name: 'arXiv bot',
             title: title,
-            title_link: id,
+            // title_link: id,
             text: formatted,
         };
     });
@@ -154,7 +148,7 @@ export default {
         const res = await getArXivInfo();
         const data = await res.json();
         const message = await parseDataForSlack(data)
-        await sendMessageToSlack(env, message);
-
+        const paper_num = data.length
+        await sendMessageToSlack(env, message, paper_num);
 	},
 } satisfies ExportedHandler<Env>;
