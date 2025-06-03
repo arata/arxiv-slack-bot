@@ -18,7 +18,6 @@
 import { XMLParser } from 'fast-xml-parser';
 
 async function getArXivInfo() {
-    // rssで受け取るのが一番最新っぽくて更新もはやそう．APIは遅いかもしれない
     // const apiUrl = `http://export.arxiv.org/api/query?search_query=cat:cs.RO&sortBy=submittedDate&sortOrder=descending&max_results=100`;
 
     const apiUrl = `https://rss.arxiv.org/rss/cs.ro`
@@ -34,9 +33,6 @@ async function getArXivInfo() {
     const json = parser.parse(xml);
     const rawEntries = json.rss.channel.item;
     const entries = Array.isArray(rawEntries) ? rawEntries : [rawEntries];
-
-    console.log(entries[0])
-    console.log(entries[0]['dc:creator'])
 
     // const yesterday = new Date();
     // console.log(yesterday)
@@ -120,11 +116,6 @@ async function parseDataForSlack(entries) {
 export default {
 	async fetch(req, env) {
 
-        // const res = await getArXivInfo();
-        // const data = await res.json();
-        // const message = await parseDataForSlack(data)
-        // await sendMessageToSlack(env, message);
-        
 		const url = new URL(req.url);
 		url.pathname = '/__scheduled';
 		url.searchParams.append('cron', '* * * * *');
