@@ -16,6 +16,7 @@
  */
 
 import { XMLParser } from 'fast-xml-parser';
+import { OpenAI } from "openai";
 
 async function getArXivInfo() {
     // const apiUrl = `http://export.arxiv.org/api/query?search_query=cat:cs.RO&sortBy=submittedDate&sortOrder=descending&max_results=100`;
@@ -54,6 +55,7 @@ async function getArXivInfo() {
                       ? e.category.map(c => c)
                       : [e.category],
         }));
+
     return new Response(JSON.stringify(filtered, null, 2), {
         headers: { "Content-Type": "application/json" },
     });
@@ -89,31 +91,59 @@ async function sendMessageToSlack(env, contents, num) {
     });
 }
 
-async function parseDataForSlack(entries) {
-    return entries.map(entry => {
+async function translateText(env, text: string, targetLang: string): Promise<string> {
+
+    const openai_client = new OpenAI({
+        apiKey: env.OPENAI_API_KEY,
+    });
+
+    const prompt = `Translate the following text into ${targetLang}:\n\n"${text}"`;
+    console.log(prompt)
+
+    const response = await openai_client.responses.create({
+        model: 'gpt-4o-mini-2024-07-18',
+        instructions: 'You are the research paper translate assistant.',
+        input: prompt,
+    });
+
+    console.log(response.output_text);
+
+    return response.output_text || "";
+
+}
+
+async function parseDataForSlack(env, entries) {
+    const messages = [];
+
+    for (const entry of entries) {
         const { title, id, published, summary, authors, arxiv_page, categories } = entry;
 
         const abstract = summary.split("Abstract:")[1]?.trim() || "";
         const download_url = arxiv_page.replace("/abs/", "/pdf/");
 
-        const formatted = `*Published:* ${published}\n` +
+        console.log('-----');
+
+        const japanese_abs = await translateText(env, abstract, 'japanese');
+
+        const formatted = `*Summary:*\n${japanese_abs.replace(/\s+/g, ' ').trim()}\n` +
+                          `*Published:* ${published}\n` +
                           `*Authors:* ${authors}\n` +
                           `*Categories:* ${categories.join(', ')}\n` +
                           `*Page:* ${arxiv_page} \n` +
-                          `*PDF:* <${download_url}|Download PDF>\n` +
-                          `*Summary:*\n${abstract.replace(/\s+/g, ' ').trim().slice(0, 500)}...`;
+                          `*PDF:* <${download_url}|Download PDF>`;
 
-        return {
+        messages.push({
             color: '#36a64f',
-            // author_name: 'arXiv bot',
             title: title,
-            // title_link: id,
             text: formatted,
-        };
-    });
+        });
+    }
+
+    return messages;
 }
 
 export default {
+
 	async fetch(req, env) {
 
 		const url = new URL(req.url);
@@ -138,8 +168,9 @@ export default {
 
         const res = await getArXivInfo();
         const data = await res.json();
-        const message = await parseDataForSlack(data)
+        const message = await parseDataForSlack(env, data)
         const paper_num = data.length
+
         await sendMessageToSlack(env, message, paper_num);
 	},
 } satisfies ExportedHandler<Env>;
